@@ -280,8 +280,29 @@ where
     y
 }
 
-/// Calculates the inverse mod of a number using Euclidean algorithm
-pub fn inv_mod<T: Debug>(x: T, p: T) -> Option<T>
+/// Computes the Extended Euclidean Algorithm (EEA).
+///
+/// Given two integers `a` and `b`, where `a >= b`, this function returns a tuple `(g, x, y)`
+/// such that `g` is the greatest common divisor of `a` and `b`, and `g = a * x + b * y`.
+///
+/// # Parameters
+///
+/// * `a` - The first integer.
+/// * `b` - The second integer.
+///
+/// # Returns
+///
+/// A tuple `(g, x, y)` representing the greatest common divisor `g` and the coefficients `x` and `y`.
+///
+/// # Examples
+///
+/// ```
+/// use ecdsa::egcd;
+///
+/// let result = egcd(10, 6);
+/// assert_eq!(result, (2, 1, -1));
+/// ```
+pub fn egcd<T: Debug>(a: T, b: T) -> (T, T, T)
 where
     T: Copy
         + PartialEq
@@ -297,32 +318,62 @@ where
     for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
     for<'x> &'x T: Add<Output = T> + Sub<Output = T>,
 {
-    let mut x_value = x;
-    // Ensure x != 0, x != p, and p != 0
-    if x_value == T::from(0u8) || x_value == p || p == T::from(0u8) {
-        return None; // Invalid input
+    if a == T::from(0u8) {
+        (b, T::from(0u8), T::from(1u8))
+    } else {
+        let (g, x, y) = egcd(b % a, a);
+        (g, y - (b / a) * x, x)
     }
+}
 
-    let mut q = T::from(0u8);
-    let mut new_t = T::from(1u8);
-    let mut r = p;
-    let mut t;
-
-    while x_value != T::from(0u8) {
-        t = r / x_value;
-        let mut temp;
-        temp = mul_mod(&t, &new_t, &p);
-        temp = p - temp;
-        temp = add_mod(&q, &temp, &p);
-        q = new_t;
-        new_t = temp;
-        println!("q: {:?}, new_t: {:?}", q, new_t);
-        r = x_value;
-        x_value = r - t * x_value;
-        println!("r:{:?}, x_value: {:?}", r, x_value);
+/// Calculates the modular inverse of a number using the Euclidean algorithm.
+///
+/// Given an integer `x` and a modulus `p`, this function computes the modular inverse `q`
+/// such that `x * q ≡ 1 (mod p)`.
+///
+/// # Arguments
+///
+/// * `x` - The integer for which to find the modular inverse.
+/// * `p` - The modulus.
+///
+/// # Returns
+///
+/// The modular inverse `q` if it exists, wrapped in `Some(q)`. If the modular inverse does not exist,
+/// this function panics.
+///
+/// # Examples
+///
+/// ```
+/// use ecdsa::{inv_mod, add_mod};
+///
+/// let result = inv_mod(3, 11);
+/// assert_eq!(result, Some(4));
+/// ```
+where
+    T: Copy
+        + PartialEq
+        + PartialOrd
+        + Sub<Output = T>
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Rem<Output = T>
+        + From<u8>
+        + Ord
+        + for<'x> AddAssign<&'x T>
+        + for<'x> SubAssign<&'x T>,
+    for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
+    for<'x> &'x T: Add<Output = T> + Sub<Output = T>,
+{
+    let (g, x, _) = egcd(x, p);
+    if g != T::from(1u8) {
+        panic!("Multiplicative inverse Does not exist!")
+    } else {
+        let zero = T::from(0u8);
+        let temp = add_mod(&x, &zero, &p);
+        let q = add_mod(&temp, &p, &p);
+        println!("q: {:?}", q);
+        Some(q)
     }
-
-    Some(q)
 }
 
 // // This is a placeholder function for scalar multiplication
