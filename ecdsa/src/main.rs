@@ -237,7 +237,7 @@ where
     y
 }
 
-/// Computes the modular multiplication of a value with the result of a base raised to a power, modulo a specified modulus.
+/// Computes the modular multiplication of a value with the result of a base raised to a power, modulo a specified modulus. Inspired by
 ///
 /// # Parameters
 ///
@@ -349,6 +349,7 @@ where
 /// let result = inv_mod(3, 11);
 /// assert_eq!(result, Some(4));
 /// ```
+pub fn inv_mod<T: Debug>(x: T, p: T) -> Option<T>
 where
     T: Copy
         + PartialEq
