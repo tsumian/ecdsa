@@ -1,74 +1,20 @@
 use core::fmt::Debug;
-use core::ops::{Add, AddAssign, BitAnd, Div, Mul, Rem, ShrAssign, Sub, SubAssign};
-use rand::Rng;
+use core::ops::{Add, AddAssign, Mul, Rem, Sub, SubAssign};
+use num::{BigInt, Num};
+use num_bigint::RandBigInt;
 use sha2::{Digest, Sha256};
+use std::ops::Shr;
 
 // Inspired by toru3/modulo-n-tools
 // https://gitlab.com/Toru3/modulo-n-tools/-/tree/master?ref_type=heads
 
 // Define the elliptic curve parameters
-const N: [u64; 4] = [
-    0xffffffff00000000,
-    0xffffffff,
-    0xbce6faada7179e84,
-    0xf3b9cac2fc632551,
-];
-
-const P: [u64; 4] = [
-    0xffffffff00000001,
-    0x00000000,
-    0x00000000,
-    0xfffffffffffffffe,
-];
-
-const GX: [u64; 4] = [
-    0x6b17d1f2e12c4247,
-    0xf8bce6e563a440f2,
-    0x77037d812deb33a0,
-    0xf4a13945d898c296,
-];
-
-const GY: [u64; 4] = [
-    0x4fe342e2fe1a7f9b,
-    0x8ee7eb4a7c0f9e16,
-    0x2bce33576b315ece,
-    0xcbb6406837bf51f5,
-];
-
-const A: [u64; 4] = [
-    0xffffffff00000001,
-    0x00000000,
-    0x00000000,
-    0xfffffffffffffffc,
-];
-
-const B: [u64; 4] = [
-    0x5ac635d8aa3a93e7,
-    0xb3ebbd55769886bc,
-    0x651d06b0cc53b0f6,
-    0x3bce3c3e27d2604b,
-];
-
-/// Generates a new private key.
-///
-/// # Returns
-///
-/// A private key represented as an array of 4 64-bit unsigned integers.
-///
-/// # Examples
-///
-/// ```
-/// let priv_key = generate_private_key();
-/// assert_eq!(priv_key.len(), 4);
-/// ```
-fn generate_private_key() -> [u64; 4] {
-    let mut rng = rand::thread_rng();
-    let mut priv_key = [0u64; 4];
-    for i in 0..4 {
-        priv_key[i] = rng.gen::<u64>() % N[i];
-    }
-    priv_key
-}
+const N_STRING: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+const P_STRING: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+const GX_STRING: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
+const GY_STRING: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+const A_STRING: &str = "ffffffff00000001000000000000000000000000fffffffffffffffffffffffc";
+const B_STRING: &str = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
 
 /// Reduces a given value modulo a specified modulus.
 ///
@@ -91,9 +37,9 @@ fn generate_private_key() -> [u64; 4] {
 /// ```
 pub fn reduce<T>(mut a: T, modulo: &T) -> T
 where
-    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + Copy,
+    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T>,
 {
-    if &a >= modulo {
+    while &a >= modulo {
         a -= modulo;
     }
     // We do not need to handle the negative case since `u64` cannot be negative.
@@ -121,9 +67,9 @@ where
 /// let result = add_mod(&a, &b, &modulus);
 /// assert_eq!(result, 1);
 /// ```
-pub fn add_mod<T>(a: &T, b: &T, modulo: &T) -> T
+pub fn add_mod<T: Debug>(a: &T, b: &T, modulo: &T) -> T
 where
-    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + Copy,
+    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T>,
     for<'x> &'x T: Add<Output = T>,
 {
     let c = a + b; // Perform the addition
@@ -152,17 +98,18 @@ where
 /// let result = sub_mod(&a, &b, &modulus);
 /// assert_eq!(result, 7); // 10 - 15 + 12 = 7 (mod 12)
 /// ```
-pub fn sub_mod<T>(a: &T, b: &T, modulo: &T) -> T
+pub fn sub_mod<T: Debug>(a: &T, b: &T, modulo: &T) -> T
 where
-    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + Copy,
+    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + From<u8>,
     for<'x> &'x T: Add<Output = T> + Sub<Output = T>,
 {
     if a >= b {
         let c = a - b;
         reduce(c, modulo)
     } else {
-        let temp = a + modulo;
-        let c = &temp - b;
+        let zero = T::from(0u8);
+        let temp = add_mod(&a, &zero, &modulo);
+        let c = sub_mod(&b, &temp, &modulo);
         reduce(c, modulo)
     }
 }
@@ -188,223 +135,280 @@ where
 /// let result = mul_mod(&a, &b, &modulus);
 /// assert_eq!(result, 6); // (7 * 8) % 10 = 56 % 10 = 6
 /// ```
-pub fn mul_mod<T>(a: &T, b: &T, modulo: &T) -> T
+pub fn mul_mod<T: Debug>(a: &T, b: &T, modulo: &T) -> T
 where
     for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
 {
     &(a * b) % modulo
 }
 
-/// Computes the modular exponentiation of a value raised to a power, modulo a specified modulus.
+/// Computes the modular inverse of a given number modulo a specified modulus.
 ///
 /// # Parameters
 ///
-/// * `a`: The base value.
-/// * `b`: The exponent value.
-/// * `modulo`: A reference to the modulus value. The result will be in the range `[0, modulo)`.
+/// * `x`: A reference to the number for which the modular inverse is to be calculated.
+/// * `p`: A reference to the modulus.
 ///
 /// # Returns
 ///
-/// The result of \( a^b \mod \text{modulo} \), which is within the range `[0, modulo)`.
+/// An `Option<BigInt>` which is:
+/// - `Some(BigInt)` if the inverse exists.
+/// - `None` if the inverse does not exist.
+///
+/// # Panics
+///
+/// The function panics if either `x` or `p` is zero, as the modular inverse does not exist in these cases.
 ///
 /// # Examples
 ///
 /// ```
-/// let a = 2u64;
-/// let b = 10u64;
-/// let modulo = 1000u64;
-/// let result = pow_mod(a, b, &modulo);
-/// assert_eq!(result, 24); // 2^10 % 1000 = 1024 % 1000 = 24
+/// let x = BigInt::from(3u32);
+/// let p = BigInt::from(11u32);
+/// match inv_mod(&x, &p) {
+///     Some(inv) => println!("The modular inverse is: {}", inv),
+///     None => println!("No modular inverse exists."),
+/// }
 /// ```
-pub fn pow_mod<T, U>(a: T, mut b: U, modulo: &T) -> T
-where
-    T: From<u8>,
-    for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
-    U: Ord + ShrAssign<u8> + From<u8>,
-    for<'x> &'x U: BitAnd<Output = U>,
-{
-    let c0 = U::from(0);
-    let c1 = U::from(1);
-    let mut x = a;
-    let mut y = T::from(1);
-    while b > c0 {
-        if &b & &c1 != c0 {
-            y = mul_mod(&x, &y, modulo);
-        }
-        x = mul_mod(&x, &x, modulo);
-        b >>= 1;
+fn inv_mod(x: &BigInt, p: &BigInt) -> Option<BigInt> {
+    if *x == BigInt::ZERO || *p == BigInt::ZERO {
+        panic!("Multiplicative inverse does not exist!"); // No inverse if x or p is zero
     }
-    y
+
+    match x.modinv(p) {
+        Some(inv) => Some(inv),
+        None => None, // No inverse if modinv returns None
+    }
 }
 
-/// Computes the modular multiplication of a value with the result of a base raised to a power, modulo a specified modulus. Inspired by
+/// Adds two points on an elliptic curve.
 ///
 /// # Parameters
 ///
-/// * `a`: The multiplier value.
-/// * `base`: The base value to be exponentiated.
-/// * `power`: The exponent value.
-/// * `modulo`: A reference to the modulus value. The result will be in the range `[0, modulo)`.
+/// * `p`: The first point (x1, y1) represented as a tuple of BigInt.
+/// * `q`: The second point (x2, y2) represented as a tuple of BigInt.
+/// * `modulo`: The prime modulus of the field.
+/// * `a`: The constant `a` that defines the elliptic curve.
 ///
 /// # Returns
 ///
-/// The result of \( a \times \text{base}^\text{power} \mod \text{modulo} \), which is within the range `[0, modulo)`.
-///
-/// # Examples
-///
-/// ```
-/// let a = 3u64;
-/// let base = 2u64;
-/// let power = 10u64;
-/// let modulo = 1000u64;
-/// let result = mul_pow_mod(a, base, power, &modulo);
-/// assert_eq!(result, 72); // 3 * 2^10 % 1000 = 3 * 1024 % 1000 = 3072 % 1000 = 72
-/// ```
-pub fn mul_pow_mod<T, U>(a: T, base: T, mut power: U, modulo: &T) -> T
-where
-    for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
-    U: Ord + ShrAssign<u8> + From<u8>,
-    for<'x> &'x U: BitAnd<Output = U>,
-{
-    let c0 = U::from(0);
-    let c1 = U::from(1);
-    let mut x = base;
-    let mut y = a;
-    while power > c0 {
-        if &power & &c1 != c0 {
-            y = mul_mod(&x, &y, modulo);
-        }
-        x = mul_mod(&x, &x, modulo);
-        power >>= 1;
-    }
-    y
-}
+/// The resulting point (x3, y3) after addition.
+fn point_add(
+    p: (BigInt, BigInt),
+    q: (BigInt, BigInt),
+    modulo: BigInt,
+    a: BigInt,
+) -> (BigInt, BigInt) {
+    // Unpack the coordinates
+    let (ref xp, ref yp) = p;
+    let (ref xq, ref yq) = q;
 
-/// Computes the Extended Euclidean Algorithm (EEA).
-///
-/// Given two integers `a` and `b`, where `a >= b`, this function returns a tuple `(g, x, y)`
-/// such that `g` is the greatest common divisor of `a` and `b`, and `g = a * x + b * y`.
-///
-/// # Parameters
-///
-/// * `a` - The first integer.
-/// * `b` - The second integer.
-///
-/// # Returns
-///
-/// A tuple `(g, x, y)` representing the greatest common divisor `g` and the coefficients `x` and `y`.
-///
-/// # Examples
-///
-/// ```
-/// use ecdsa::egcd;
-///
-/// let result = egcd(10, 6);
-/// assert_eq!(result, (2, 1, -1));
-/// ```
-pub fn egcd<T: Debug>(a: T, b: T) -> (T, T, T)
-where
-    T: Copy
-        + PartialEq
-        + PartialOrd
-        + Sub<Output = T>
-        + Mul<Output = T>
-        + Div<Output = T>
-        + Rem<Output = T>
-        + From<u8>
-        + Ord
-        + for<'x> AddAssign<&'x T>
-        + for<'x> SubAssign<&'x T>,
-    for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
-    for<'x> &'x T: Add<Output = T> + Sub<Output = T>,
-{
-    if a == T::from(0u8) {
-        (b, T::from(0u8), T::from(1u8))
+    // Check if either point is the point at infinity
+    if *xp == BigInt::ZERO && *yp == BigInt::ZERO {
+        return q;
+    }
+    if *xq == BigInt::ZERO && *yq == BigInt::ZERO {
+        return p;
+    }
+
+    let lambda;
+    // Check if both points are the same
+    if *xp == *xq && *yp == *yq {
+        // Point doubling case
+        lambda = lambda_point_doubling(xp, yp, &modulo, &a);
     } else {
-        let (g, x, y) = egcd(b % a, a);
-        (g, y - (b / a) * x, x)
+        // General case
+        lambda = lambda_point_adding(xp, yp, xq, yq, &modulo);
     }
+    // Compute the slope lambda = (yq - yp) / (xq - xp) mod p
+    let lambda_square = lambda.modpow(&BigInt::from(2u32), &modulo);
+
+    // Get (xr, yr)
+    let mut temp = sub_mod(&lambda_square, &xp, &modulo);
+    let xr = sub_mod(&temp, &xq, &modulo);
+    temp = sub_mod(&xp, &xr, &modulo);
+    temp = mul_mod(&lambda, &temp, &modulo);
+    let yr = sub_mod(&temp, &yp, &modulo);
+
+    return (xr, yr);
 }
 
-/// Calculates the modular inverse of a number using the Euclidean algorithm.
+/// Computes the slope (lambda) for adding two distinct points on an elliptic curve. It is used when adding two distinct points `P` and `Q` on the curve.
 ///
-/// Given an integer `x` and a modulus `p`, this function computes the modular inverse `q`
-/// such that `x * q ≡ 1 (mod p)`.
+/// # Parameters
 ///
-/// # Arguments
-///
-/// * `x` - The integer for which to find the modular inverse.
-/// * `p` - The modulus.
+/// * `xp`: A reference to the x-coordinate of point `P`.
+/// * `yp`: A reference to the y-coordinate of point `P`.
+/// * `xq`: A reference to the x-coordinate of point `Q`.
+/// * `yq`: A reference to the y-coordinate of point `Q`.
+/// * `modulo`: A reference to the modulus value `p`.
 ///
 /// # Returns
 ///
-/// The modular inverse `q` if it exists, wrapped in `Some(q)`. If the modular inverse does not exist,
-/// this function panics.
+/// A `BigInt` representing the slope `lambda`.
 ///
 /// # Examples
 ///
 /// ```
-/// use ecdsa::{inv_mod, add_mod};
+/// let xp = BigInt::from(2u32);
+/// let yp = BigInt::from(3u32);
+/// let xq = BigInt::from(5u32);
+/// let yq = BigInt::from(7u32);
+/// let modulo = BigInt::from(11u32);
 ///
-/// let result = inv_mod(3, 11);
-/// assert_eq!(result, Some(4));
+/// let lambda = lambda_point_adding(&xp, &yp, &xq, &yq, &modulo);
 /// ```
-pub fn inv_mod<T: Debug>(x: T, p: T) -> Option<T>
-where
-    T: Copy
-        + PartialEq
-        + PartialOrd
-        + Sub<Output = T>
-        + Mul<Output = T>
-        + Div<Output = T>
-        + Rem<Output = T>
-        + From<u8>
-        + Ord
-        + for<'x> AddAssign<&'x T>
-        + for<'x> SubAssign<&'x T>,
-    for<'x> &'x T: Mul<Output = T> + Rem<Output = T>,
-    for<'x> &'x T: Add<Output = T> + Sub<Output = T>,
-{
-    let (g, x, _) = egcd(x, p);
-    if g != T::from(1u8) {
-        panic!("Multiplicative inverse Does not exist!")
-    } else {
-        let zero = T::from(0u8);
-        let temp = add_mod(&x, &zero, &p);
-        let q = add_mod(&temp, &p, &p);
-        println!("q: {:?}", q);
-        Some(q)
-    }
+fn lambda_point_adding(
+    xp: &BigInt,
+    yp: &BigInt,
+    xq: &BigInt,
+    yq: &BigInt,
+    modulo: &BigInt,
+) -> BigInt {
+    // Compute the slope lambda = (yq - yp) / (xq - xp) mod p
+    let numerator = sub_mod(yq, yp, modulo);
+    let denominator = sub_mod(xq, xp, modulo);
+
+    // Get the inverse of denominator
+    let denominator_inv =
+        inv_mod(&denominator, modulo).expect("Multiplicative inverse does not exist!");
+
+    let lambda = mul_mod(&numerator, &denominator_inv, modulo);
+    lambda
 }
 
-// // This is a placeholder function for scalar multiplication
-// // You should replace this with an actual implementation
-// fn mul(scalar: [u64; 4], point: ([u64; 4], [u64; 4]), p: [u64; 4]) -> ([u64; 4], [u64; 4]) {
-//     // Implement point multiplication here
-//     (point.0, point.1)
-// }
+/// Computes the slope (lambda) for doubling a point on an elliptic curve.
+/// It is used when doubling a point `P` on the curve.
+///
+/// # Parameters
+///
+/// * `xp`: A reference to the x-coordinate of point `P`.
+/// * `yp`: A reference to the y-coordinate of point `P`.
+/// * `modulo`: A reference to the modulus value `p`.
+/// * `a`: A reference to the curve parameter `a`.
+///
+/// # Returns
+///
+/// A `BigInt` representing the slope `lambda`.
+///
+/// # Examples
+///
+/// ```
+/// let xp = BigInt::from(2u32);
+/// let yp = BigInt::from(3u32);
+/// let modulo = BigInt::from(11u32);
+/// let a = BigInt::from(1u32);
+///
+/// let lambda = lambda_point_doubling(&xp, &yp, &modulo, &a);
+/// ```
+fn lambda_point_doubling(xp: &BigInt, yp: &BigInt, modulo: &BigInt, a: &BigInt) -> BigInt {
+    let xp_square = xp.modpow(&BigInt::from(2u32), modulo);
+    let temp = mul_mod(&BigInt::from(3u32), &xp_square, modulo);
+    let numerator = add_mod(&temp, a, modulo);
+    let denominator = mul_mod(&BigInt::from(2u32), yp, modulo);
+    let denominator_inv =
+        inv_mod(&denominator, modulo).expect("Multiplicative inverse does not exist!");
+    let lambda = mul_mod(&numerator, &denominator_inv, modulo);
+    lambda
+}
 
-// // Placeholder function for point addition
-// fn add(
-//     point1: ([u64; 4], [u64; 4]),
-//     point2: ([u64; 4], [u64; 4]),
-//     p: [u64; 4],
-// ) -> ([u64; 4], [u64; 4]) {
-//     // Implement point addition here
-//     (point1.0, point1.1)
-// }
+/// Performs scalar multiplication on an elliptic curve.
+/// It uses the double-and-add algorithm to efficiently compute the result.
+///
+/// # Parameters
+///
+/// * `k`: A reference to the scalar value.
+/// * `p`: A reference to the point `P` represented as a tuple `(x, y)`.
+/// * `modulo`: A reference to the modulus value `p`.
+/// * `a`: A reference to the curve parameter `a`.
+///
+/// # Returns
+///
+/// A tuple `(x, y)` representing the resulting point on the elliptic curve.
+///
+/// # Examples
+///
+/// ```
+/// let k = BigInt::from(3u32);
+/// let p = (BigInt::from(2u32), BigInt::from(3u32));
+/// let modulo = BigInt::from(11u32);
+/// let a = BigInt::from(1u32);
+///
+/// let result = scalar_mult(&k, &p, &modulo, &a);
+/// ```
+fn scalar_mult(k: &BigInt, p: &(BigInt, BigInt), modulo: &BigInt, a: &BigInt) -> (BigInt, BigInt) {
+    let mut n = k.clone();
+    let mut q = (BigInt::ZERO, BigInt::ZERO); // Point at infinity
+    let mut r = p.clone(); // Current point
 
-// // Placeholder function for modular inverse
-// fn mod_inv(value: [u64; 4], modulus: [u64; 4]) -> [u64; 4] {
-//     // Implement modular inverse here
-//     value
-// }
+    while n > BigInt::ZERO {
+        if &n & BigInt::from(1u32) == BigInt::from(1u32) {
+            q = point_add(q, r.clone(), modulo.clone(), a.clone());
+        }
+        r = point_add(r.clone(), r.clone(), modulo.clone(), a.clone());
+        n = n.shr(1);
+    }
 
-// fn generate_public_key(priv_key: [u64; 4]) -> ([u64; 4], [u64; 4]) {
-//     // Generator point of the curve
-//     let g = (GX, GY);
-//     mul(priv_key, g, P)
-// }
+    q
+}
+
+/// Generates a private key for elliptic curve cryptography.
+///
+/// # Parameters
+///
+/// * `N`: The upper bound (exclusive) for the private key. This is typically the order of the curve
+/// or the field size.
+///
+/// # Returns
+///
+/// A `BigInt` representing the private key.
+///
+/// # Examples
+///
+/// ```
+/// use num_bigint::BigInt;
+/// use crate::generate_private_key;
+///
+/// let n = BigInt::from(0xffffffff00000001u64);
+/// let private_key = generate_private_key(&n);
+/// println!("Private Key: {}", private_key);
+/// ```
+fn generate_private_key(N: &BigInt) -> BigInt {
+    let mut rng = rand::thread_rng();
+    let priv_key = rng.gen_bigint_range(&BigInt::ZERO, N);
+    priv_key
+}
+
+/// Generates a public key for elliptic curve cryptography based on a given private key.
+///
+/// # Parameters
+///
+/// * `priv_key`: A reference to the private key, which is a `BigInt`.
+/// * `generator_point`: A reference to a tuple representing the generator point (Gx, Gy) on the elliptic curve.
+/// * `modulo`: A reference to the modulo `p` defining the finite field for the elliptic curve.
+/// * `a`: A reference to the curve parameter `a` in the elliptic curve equation `y^2 = x^3 + ax + b`.
+///
+/// # Returns
+///
+/// A tuple `(BigInt, BigInt)` representing the public key, which is the point (Px, Py) on the elliptic curve.
+///
+/// # Examples
+///
+/// ```
+/// let priv_key = BigInt::from(1234567890u64);
+/// let generator_point = (BigInt::from(4u64), BigInt::from(20u64)); // Example generator point
+/// let modulo = BigInt::parse_bytes(b"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16).unwrap();
+/// let a = BigInt::from(0u64); // For secp256k1 curve
+///
+/// let public_key = generate_public_key(&priv_key, &generator_point, &modulo, &a);
+/// ```
+fn generate_public_key(
+    priv_key: &BigInt,
+    generator_point: &(BigInt, BigInt),
+    modulo: &BigInt,
+    a: &BigInt,
+) -> (BigInt, BigInt) {
+    scalar_mult(priv_key, generator_point, modulo, a)
+}
 
 // // Signature generation
 // fn sign_message(priv_key: [u64; 4], message: &[u8]) -> ([u64; 4], [u64; 4]) {
@@ -445,11 +449,31 @@ where
 // }
 
 fn main() {
+    let N: BigInt = BigInt::from_str_radix(&N_STRING, 16).unwrap();
+    let P: BigInt = BigInt::from_str_radix(&P_STRING, 16).unwrap();
+    let GX: BigInt = BigInt::from_str_radix(&GX_STRING, 16).unwrap();
+    let GY: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
+    let A: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
+    let B: BigInt = BigInt::from_str_radix(&B_STRING, 16).unwrap();
+
     // Key generation
-    let priv_key = generate_private_key();
+    let priv_key = generate_private_key(&N);
     println!("Private key: {:x?}", priv_key);
-    let example = inv_mod(7, 31);
-    println!("example: {:?}", example);
+
+    let g = (GX.clone(), GY.clone());
+    let public_key = generate_public_key(&priv_key, &g, &P, &A);
+    println!("Public key: {:x?}", public_key);
+
+    // let example_point_2 = (GX.clone(), GY.clone());
+    // let FX_STRING = "a9fca9234e2b1a6d57bdf2e1a123987b83fc2e8d6a9d3e4cf12938745a8f1d23";
+    // let FX = BigInt::from_str_radix(&FX_STRING, 16).unwrap();
+
+    // let FY_STRING = "4b3d4a8c9e2f1a6b57be4f1a3d2f986793ef2d1a4b6f2c3ab4f12356789c1d23";
+    // let FY = BigInt::from_str_radix(&FY_STRING, 16).unwrap();
+
+    // let example_point_1 = (FX, FY);
+
+    // println!("{}", 5756518291402817435 - 18446744069414584321)
 
     // let pub_key = generate_public_key(priv_key);
 
