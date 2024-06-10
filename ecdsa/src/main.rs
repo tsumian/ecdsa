@@ -1,8 +1,8 @@
 use core::fmt::Debug;
 use core::ops::{Add, AddAssign, Mul, Rem, Sub, SubAssign};
+use hmac_sha256::Hash;
 use num::{BigInt, Num};
 use num_bigint::RandBigInt;
-use sha2::{Digest, Sha256};
 use std::ops::Shr;
 
 // Inspired by toru3/modulo-n-tools
@@ -372,9 +372,9 @@ fn scalar_mult(k: &BigInt, p: &(BigInt, BigInt), modulo: &BigInt, a: &BigInt) ->
 /// let private_key = generate_private_key(&n);
 /// println!("Private Key: {}", private_key);
 /// ```
-fn generate_private_key(N: &BigInt) -> BigInt {
+fn generate_private_key(n: &BigInt) -> BigInt {
     let mut rng = rand::thread_rng();
-    let priv_key = rng.gen_bigint_range(&BigInt::ZERO, N);
+    let priv_key = rng.gen_bigint_range(&BigInt::ZERO, n);
     priv_key
 }
 
@@ -410,80 +410,90 @@ fn generate_public_key(
     scalar_mult(priv_key, generator_point, modulo, a)
 }
 
-// // Signature generation
-// fn sign_message(priv_key: [u64; 4], message: &[u8]) -> ([u64; 4], [u64; 4]) {
-//     let hash = Sha256::digest(message);
-//     let z = [
-//         hash[0] as u64,
-//         hash[1] as u64,
-//         hash[2] as u64,
-//         hash[3] as u64,
-//     ]; // Simplified for illustration
-//     let k = generate_private_key(); // Temporary random value
-//     let (x1, y1) = mul(k, (GX, GY), P);
-//     let r = x1; // Simplified, typically reduce mod N
-//     let k_inv = mod_inv(k, N);
-//     let s = mul_add(k_inv, add(z, mul(r, priv_key, N)), N); // Simplified
-//     (r, s)
-// }
+fn generate_random_key(n: &BigInt) -> BigInt {
+    let mut rng = rand::thread_rng();
+    let random_key = rng.gen_bigint_range(&BigInt::ZERO, n);
+    random_key
+}
 
-// // Signature verification
-// fn verify_signature(
-//     pub_key: ([u64; 4], [u64; 4]),
-//     message: &[u8],
-//     signature: ([u64; 4], [u64; 4]),
-// ) -> bool {
-//     let (r, s) = signature;
-//     let w = mod_inv(s, N);
-//     let hash = Sha256::digest(message);
-//     let z = [
-//         hash[0] as u64,
-//         hash[1] as u64,
-//         hash[2] as u64,
-//         hash[3] as u64,
-//     ]; // Simplified for illustration
-//     let u1 = mul(z, w, N); // Simplified
-//     let u2 = mul(r, w, N); // Simplified
-//     let (x1, y1) = add(mul(u1, (GX, GY), P), mul(u2, pub_key, P), P);
-//     x1 == r // Simplified comparison
-// }
+fn calculate_signature_proof(
+    k: &BigInt,
+    h: &BigInt,
+    r: &BigInt,
+    priv_key: &BigInt,
+    modulo: &BigInt,
+) -> BigInt {
+    let k_inv = inv_mod(k, modulo).expect("Multiplicative inverse does not exist!");
+    let mut temp = mul_mod(r, priv_key, modulo);
+    temp = add_mod(h, &temp, modulo);
+    let s = mul_mod(&k_inv, &temp, modulo);
+    s
+}
+
+// Signature generation
+fn sign_message(
+    priv_key: &BigInt,
+    message: &[u8],
+    n: &BigInt,
+    generator_point: &(BigInt, BigInt),
+    modulo: &BigInt,
+    a: &BigInt,
+) -> (BigInt, BigInt) {
+    let hash = Hash::hash(message);
+    let h = BigInt::from_signed_bytes_be(&hash);
+    let k = generate_random_key(n);
+    let (r, _y) = scalar_mult(&k, generator_point, modulo, a);
+    let s = calculate_signature_proof(&k, &h, &r, priv_key, modulo);
+    (r, s)
+}
+
+// Signature verification
+fn verify(
+    message: &[u8],
+    r: &BigInt,
+    s: &BigInt,
+    public_key: &(BigInt, BigInt),
+    generator_point: &(BigInt, BigInt),
+    modulo: &BigInt,
+    a: &BigInt,
+) -> bool {
+    let hash = Hash::hash(message);
+    let h = BigInt::from_signed_bytes_be(&hash);
+    let s1 = inv_mod(s, modulo).expect("Multiplicative inverse does not exist!");
+    let mut temp = mul_mod(&h, &s1, modulo);
+    let point_1 = scalar_mult(&temp, generator_point, modulo, a);
+    temp = mul_mod(&r, &s1, modulo);
+    let point_2 = scalar_mult(&temp, public_key, modulo, a);
+    let (r_prime_x, _r_prime_y) = point_add(point_1, point_2, modulo.clone(), a.clone());
+    println!("r_prime_x: {:?}", r_prime_x);
+    assert_eq!(r_prime_x, r.clone());
+    r_prime_x == *r
+}
 
 fn main() {
-    let N: BigInt = BigInt::from_str_radix(&N_STRING, 16).unwrap();
-    let P: BigInt = BigInt::from_str_radix(&P_STRING, 16).unwrap();
-    let GX: BigInt = BigInt::from_str_radix(&GX_STRING, 16).unwrap();
-    let GY: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
-    let A: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
-    let B: BigInt = BigInt::from_str_radix(&B_STRING, 16).unwrap();
+    let n: BigInt = BigInt::from_str_radix(&N_STRING, 16).unwrap();
+    let p: BigInt = BigInt::from_str_radix(&P_STRING, 16).unwrap();
+    let gx: BigInt = BigInt::from_str_radix(&GX_STRING, 16).unwrap();
+    let gy: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
+    let a: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
+    let _b: BigInt = BigInt::from_str_radix(&B_STRING, 16).unwrap();
 
     // Key generation
-    let priv_key = generate_private_key(&N);
+    let priv_key = generate_private_key(&n);
     println!("Private key: {:x?}", priv_key);
 
-    let g = (GX.clone(), GY.clone());
-    let public_key = generate_public_key(&priv_key, &g, &P, &A);
+    let g = (gx.clone(), gy.clone());
+    let public_key = generate_public_key(&priv_key, &g, &p, &a);
     println!("Public key: {:x?}", public_key);
 
-    // let example_point_2 = (GX.clone(), GY.clone());
-    // let FX_STRING = "a9fca9234e2b1a6d57bdf2e1a123987b83fc2e8d6a9d3e4cf12938745a8f1d23";
-    // let FX = BigInt::from_str_radix(&FX_STRING, 16).unwrap();
+    // Signing of message
+    let message = b"Hello World";
+    let (r, s) = sign_message(&priv_key, message, &n, &g, &p, &a);
+    println!("r: {:?}", r);
+    println!("s: {:?}", s);
 
-    // let FY_STRING = "4b3d4a8c9e2f1a6b57be4f1a3d2f986793ef2d1a4b6f2c3ab4f12356789c1d23";
-    // let FY = BigInt::from_str_radix(&FY_STRING, 16).unwrap();
-
-    // let example_point_1 = (FX, FY);
-
-    // println!("{}", 5756518291402817435 - 18446744069414584321)
-
-    // let pub_key = generate_public_key(priv_key);
-
-    // // Message to be signed
-    // let message = b"Hello, world!";
-
-    // // Sign the message
-    // let signature = sign_message(priv_key, message);
-
-    // // Verify the signature
-    // let is_valid = verify_signature(pub_key, message, signature);
-    // println!("Signature valid: {}", is_valid);
+    // Signature verification
+    let is_valid = verify(message, &r, &s, &public_key, &g, &p, &a);
+    // Check if verify returns true
+    assert!(is_valid)
 }
