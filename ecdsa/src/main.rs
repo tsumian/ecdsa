@@ -1,20 +1,27 @@
 use core::fmt::Debug;
 use core::ops::{Add, AddAssign, Mul, Rem, Sub, SubAssign};
-use hmac_sha256::Hash;
 use num::{BigInt, Num};
 use num_bigint::RandBigInt;
+use sha2::{Digest, Sha256};
 use std::ops::Shr;
 
 // Inspired by toru3/modulo-n-tools
 // https://gitlab.com/Toru3/modulo-n-tools/-/tree/master?ref_type=heads
 
 // Define the elliptic curve parameters
-const N_STRING: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
-const P_STRING: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
-const GX_STRING: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
-const GY_STRING: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
-const A_STRING: &str = "ffffffff00000001000000000000000000000000fffffffffffffffffffffffc";
-const B_STRING: &str = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
+// const N_STRING: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+// const P_STRING: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+// const GX_STRING: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
+// const GY_STRING: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+// const A_STRING: &str = "ffffffff00000001000000000000000000000000fffffffffffffffffffffffc";
+// const B_STRING: &str = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
+
+const N_STRING: &str = "12";
+const P_STRING: &str = "11";
+const GX_STRING: &str = "F";
+const GY_STRING: &str = "D";
+const A_STRING: &str = "0";
+const B_STRING: &str = "7";
 
 /// Reduces a given value modulo a specified modulus.
 ///
@@ -42,7 +49,6 @@ where
     while &a >= modulo {
         a -= modulo;
     }
-    // We do not need to handle the negative case since `u64` cannot be negative.
     a
 }
 
@@ -67,13 +73,13 @@ where
 /// let result = add_mod(&a, &b, &modulus);
 /// assert_eq!(result, 1);
 /// ```
-pub fn add_mod<T: Debug>(a: &T, b: &T, modulo: &T) -> T
+pub fn add_mod<T: Debug + Clone>(a: &T, b: &T, modulo: &T) -> T
 where
-    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T>,
+    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + Rem<Output = T>,
     for<'x> &'x T: Add<Output = T>,
 {
     let c = a + b; // Perform the addition
-    reduce(c, modulo)
+    c % modulo.clone()
 }
 
 /// Subtracts two values and reduces the result modulo a specified modulus.
@@ -98,19 +104,18 @@ where
 /// let result = sub_mod(&a, &b, &modulus);
 /// assert_eq!(result, 7); // 10 - 15 + 12 = 7 (mod 12)
 /// ```
-pub fn sub_mod<T: Debug>(a: &T, b: &T, modulo: &T) -> T
+pub fn sub_mod<T: Debug + Clone>(a: &T, b: &T, modulo: &T) -> T
 where
-    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + From<u8>,
+    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T> + Rem<Output = T> + From<u8>,
     for<'x> &'x T: Add<Output = T> + Sub<Output = T>,
 {
     if a >= b {
         let c = a - b;
-        reduce(c, modulo)
+        c % modulo.clone()
     } else {
-        let zero = T::from(0u8);
-        let temp = add_mod(&a, &zero, &modulo);
-        let c = sub_mod(&b, &temp, &modulo);
-        reduce(c, modulo)
+        let temp = a + modulo;
+        let c = sub_mod(&temp, &b, &modulo);
+        c % modulo.clone()
     }
 }
 
@@ -201,6 +206,10 @@ fn point_add(
     // Unpack the coordinates
     let (ref xp, ref yp) = p;
     let (ref xq, ref yq) = q;
+
+    if xp.clone() == xq.clone() && yp.clone() == (yq.clone() * BigInt::from(1u8)) {
+        return (BigInt::ZERO, BigInt::ZERO);
+    }
 
     // Check if either point is the point at infinity
     if *xp == BigInt::ZERO && *yp == BigInt::ZERO {
@@ -341,13 +350,12 @@ fn scalar_mult(k: &BigInt, p: &(BigInt, BigInt), modulo: &BigInt, a: &BigInt) ->
     let mut r = p.clone(); // Current point
 
     while n > BigInt::ZERO {
-        if &n & BigInt::from(1u32) == BigInt::from(1u32) {
+        if &n % 2 != BigInt::ZERO {
             q = point_add(q, r.clone(), modulo.clone(), a.clone());
         }
         r = point_add(r.clone(), r.clone(), modulo.clone(), a.clone());
         n = n.shr(1);
     }
-
     q
 }
 
@@ -410,12 +418,65 @@ fn generate_public_key(
     scalar_mult(priv_key, generator_point, modulo, a)
 }
 
+/// Generates a random key within the specified range [1, n).
+///
+/// # Parameters
+///
+/// * `n`: A reference to the upper bound `BigInt`. The generated key will be in the range [1, `n`).
+///
+/// # Returns
+///
+/// A `BigInt` representing the generated random key.
+///
+/// # Examples
+///
+/// ```
+/// use num_bigint::BigInt;
+/// use crate::generate_random_key;
+///
+/// let n = BigInt::from(1000000u64);
+/// let random_key = generate_random_key(&n);
+/// println!("Generated random key: {:?}", random_key);
+/// ```
 fn generate_random_key(n: &BigInt) -> BigInt {
     let mut rng = rand::thread_rng();
-    let random_key = rng.gen_bigint_range(&BigInt::ZERO, n);
+    let random_key = rng.gen_bigint_range(&BigInt::from(1u8), n);
     random_key
 }
 
+/// Calculates the proof for a digital signature using ECDSA.
+///
+/// # Parameters
+///
+/// * `k`: A reference to the random value `k`.
+/// * `h`: A reference to the hashed message value `h`.
+/// * `r`: A reference to the `r` value from the generated random point.
+/// * `priv_key`: A reference to the private key `priv_key`.
+/// * `modulo`: A reference to the modulus value `modulo`.
+///
+/// # Returns
+///
+/// A `BigInt` representing the calculated signature proof `s`.
+///
+/// # Panics
+///
+/// Panics if the multiplicative inverse of `k` does not exist.
+///
+/// # Examples
+///
+/// ```
+/// use num_bigint::BigInt;
+/// use crate::calculate_signature_proof;
+///
+/// let k = BigInt::from(123456);
+/// let h = BigInt::from(78910);
+/// let r = BigInt::from(111213);
+/// let priv_key = BigInt::from(141516);
+/// let modulo = BigInt::from(171819);
+///
+/// let s = calculate_signature_proof(&k, &h, &r, &priv_key, &modulo);
+/// println!("Signature proof: {:?}", s);
+/// ```
 fn calculate_signature_proof(
     k: &BigInt,
     h: &BigInt,
@@ -430,7 +491,36 @@ fn calculate_signature_proof(
     s
 }
 
-// Signature generation
+/// Generates a digital signature for a given message using ECDSA.
+///
+/// # Parameters
+///
+/// * `priv_key`: A reference to the private key `priv_key`.
+/// * `message`: A reference to the message bytes to be signed.
+/// * `n`: A reference to the order of the group `n`.
+/// * `generator_point`: A reference to the generator point of the elliptic curve.
+/// * `modulo`: A reference to the modulus value `modulo`.
+/// * `a`: A reference to the elliptic curve parameter `a`.
+///
+/// # Returns
+///
+/// A tuple `(BigInt, BigInt)` representing the generated signature `(r, s)`.
+///
+/// # Examples
+///
+/// ```
+/// use num_bigint::BigInt;
+/// use crate::sign_message;
+///
+/// let priv_key = BigInt::from(141516);
+/// let message = b"Hello, world!";
+/// let n = BigInt::from(171819);
+/// let generator_point = (BigInt::from(192021), BigInt::from(222324));
+/// let modulo = BigInt::from(252627);
+/// let a = BigInt::from(282930);
+///
+/// let (r, s) = sign_message(&priv_key, message, &n, &generator_point, &modulo, &a);
+/// ```
 fn sign_message(
     priv_key: &BigInt,
     message: &[u8],
@@ -439,15 +529,61 @@ fn sign_message(
     modulo: &BigInt,
     a: &BigInt,
 ) -> (BigInt, BigInt) {
-    let hash = Hash::hash(message);
-    let h = BigInt::from_signed_bytes_be(&hash);
+    // Hash the message
+    let mut sha256 = Sha256::new();
+    sha256.update(message);
+    let hash_string: String = format!("{:X}", sha256.finalize());
+    let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
+
     let k = generate_random_key(n);
-    let (r, _y) = scalar_mult(&k, generator_point, modulo, a);
+    println!("Random key: {:?}", k);
+    let (r, y) = scalar_mult(&k, generator_point, modulo, a);
+    println!("Expected random point: ({:?}, {:?})", r, y);
     let s = calculate_signature_proof(&k, &h, &r, priv_key, modulo);
     (r, s)
 }
 
-// Signature verification
+/// Verifies a digital signature for a given message using ECDSA.
+///
+/// # Parameters
+///
+/// * `message`: A reference to the message bytes to be verified.
+/// * `r`: A reference to the `r` value from the generated signature.
+/// * `s`: A reference to the `s` value from the generated signature.
+/// * `public_key`: A reference to the public key `(x, y)` tuple.
+/// * `generator_point`: A reference to the generator point of the elliptic curve.
+/// * `modulo`: A reference to the modulus value `modulo`.
+/// * `a`: A reference to the elliptic curve parameter `a`.
+///
+/// # Returns
+///
+/// A `bool` indicating whether the signature is valid (`true`) or not (`false`).
+///
+/// # Examples
+///
+/// ```
+/// use num_bigint::BigInt;
+/// use crate::verify;
+///
+/// let message = b"Hello, world!";
+/// let r = BigInt::from(123456);
+/// let s = BigInt::from(78910);
+/// let public_key = (BigInt::from(111213), BigInt::from(141516));
+/// let generator_point = (BigInt::from(192021), BigInt::from(222324));
+/// let modulo = BigInt::from(252627);
+/// let a = BigInt::from(282930);
+///
+/// let is_valid = verify(
+///     message,
+///     &r,
+///     &s,
+///     &public_key,
+///     &generator_point,
+///     &modulo,
+///     &a,
+/// );
+/// println!("Signature valid: {:?}", is_valid);
+/// ```
 fn verify(
     message: &[u8],
     r: &BigInt,
@@ -457,15 +593,27 @@ fn verify(
     modulo: &BigInt,
     a: &BigInt,
 ) -> bool {
-    let hash = Hash::hash(message);
-    let h = BigInt::from_signed_bytes_be(&hash);
+    // Hash the message
+    let mut sha256 = Sha256::new();
+    sha256.update(message);
+    let hash_string: String = format!("{:X}", sha256.finalize());
+    let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
+
+    // Calculate s1 from s
     let s1 = inv_mod(s, modulo).expect("Multiplicative inverse does not exist!");
-    let mut temp = mul_mod(&h, &s1, modulo);
-    let point_1 = scalar_mult(&temp, generator_point, modulo, a);
-    temp = mul_mod(&r, &s1, modulo);
-    let point_2 = scalar_mult(&temp, public_key, modulo, a);
-    let (r_prime_x, _r_prime_y) = point_add(point_1, point_2, modulo.clone(), a.clone());
-    println!("r_prime_x: {:?}", r_prime_x);
+    println!("actual s1: {:?}", s1);
+
+    let c1 = mul_mod(&h, &s1, modulo); // (h * s1)
+    let point_1 = scalar_mult(&c1, generator_point, modulo, a); // (h * s1) * G
+
+    let c2 = mul_mod(r, &s1, modulo); // (r * s1)
+    let point_2 = scalar_mult(&c2, public_key, modulo, a); // (r * s1) * pubKey
+
+    println!("c1: {:?}, c2: {:?}", c1, c2);
+    println!("Point 1: {:?}, Point 2: {:?}", point_1, point_2);
+    let (r_prime_x, r_prime_y) = point_add(point_1, point_2, modulo.clone(), a.clone());
+
+    println!("r_prime_x: {:?}, r_prime_y: {:?}", r_prime_x, r_prime_y);
     assert_eq!(r_prime_x, r.clone());
     r_prime_x == *r
 }
@@ -477,6 +625,10 @@ fn main() {
     let gy: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
     let a: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
     let _b: BigInt = BigInt::from_str_radix(&B_STRING, 16).unwrap();
+    println!(
+        "n: {:?}, p: {:?}, gx: {:?}, gy: {:?}, a: {:?}",
+        n, p, gx, gy, a
+    );
 
     // Key generation
     let priv_key = generate_private_key(&n);
@@ -487,7 +639,7 @@ fn main() {
     println!("Public key: {:x?}", public_key);
 
     // Signing of message
-    let message = b"Hello World";
+    let message = b"Hello, world!";
     let (r, s) = sign_message(&priv_key, message, &n, &g, &p, &a);
     println!("r: {:?}", r);
     println!("s: {:?}", s);
