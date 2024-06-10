@@ -207,7 +207,7 @@ fn point_add(
     let (ref xp, ref yp) = p;
     let (ref xq, ref yq) = q;
 
-    if xp.clone() == xq.clone() && yp.clone() == (yq.clone() * BigInt::from(1u8)) {
+    if xp.clone() == xq.clone() && yp.clone() == (yq.clone() * -BigInt::from(1u8)) {
         return (BigInt::ZERO, BigInt::ZERO);
     }
 
