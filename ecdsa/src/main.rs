@@ -530,10 +530,11 @@ fn sign_message(
     a: &BigInt,
 ) -> (BigInt, BigInt) {
     // Hash the message
-    let mut sha256 = Sha256::new();
-    sha256.update(message);
-    let hash_string: String = format!("{:X}", sha256.finalize());
-    let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
+    // let mut sha256 = Sha256::new();
+    // sha256.update(message);
+    // let hash_string: String = format!("{:X}", sha256.finalize());
+    // let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
+    let h: BigInt = BigInt::from(1u8);
 
     let k = generate_random_key(n);
     println!("Random key: {:?}", k);
@@ -594,10 +595,11 @@ fn verify(
     a: &BigInt,
 ) -> bool {
     // Hash the message
-    let mut sha256 = Sha256::new();
-    sha256.update(message);
-    let hash_string: String = format!("{:X}", sha256.finalize());
-    let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
+    // let mut sha256 = Sha256::new();
+    // sha256.update(message);
+    // let hash_string: String = format!("{:X}", sha256.finalize());
+    // let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
+    let h: BigInt = BigInt::from(1u8);
 
     // Calculate s1 from s
     let s1 = inv_mod(s, modulo).expect("Multiplicative inverse does not exist!");
