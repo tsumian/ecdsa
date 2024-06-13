@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 use core::ops::{Add, AddAssign, Mul, Rem, Sub, SubAssign};
+use hex_literal::hex;
 use num::{BigInt, Num};
 use num_bigint::RandBigInt;
 use sha2::{Digest, Sha256};
@@ -8,49 +9,13 @@ use std::ops::Shr;
 // Inspired by toru3/modulo-n-tools
 // https://gitlab.com/Toru3/modulo-n-tools/-/tree/master?ref_type=heads
 
-// Define the elliptic curve parameters
-// const N_STRING: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
-// const P_STRING: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
-// const GX_STRING: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
-// const GY_STRING: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
-// const A_STRING: &str = "ffffffff00000001000000000000000000000000fffffffffffffffffffffffc";
-// const B_STRING: &str = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
-
-const N_STRING: &str = "12";
-const P_STRING: &str = "11";
-const GX_STRING: &str = "F";
-const GY_STRING: &str = "D";
-const A_STRING: &str = "0";
-const B_STRING: &str = "7";
-
-/// Reduces a given value modulo a specified modulus.
-///
-/// # Parameters
-///
-/// * `a`: The value to be reduced. This value is modified in place.
-/// * `modulo`: A reference to the modulus value. The result will be in the range `[0, modulo)`.
-///
-/// # Returns
-///
-/// The reduced value, which is within the range `[0, modulo)`.
-///
-/// # Examples
-///
-/// ```
-/// let mut value = 20u64;
-/// let modulus = 15u64;
-/// let result = reduce(value, &modulus);
-/// assert_eq!(result, 5);
-/// ```
-pub fn reduce<T>(mut a: T, modulo: &T) -> T
-where
-    T: Ord + for<'x> AddAssign<&'x T> + for<'x> SubAssign<&'x T>,
-{
-    while &a >= modulo {
-        a -= modulo;
-    }
-    a
-}
+// Define the elliptic curve parameters for P256
+const N_STRING: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+const P_STRING: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+const GX_STRING: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
+const GY_STRING: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+const A_STRING: &str = "ffffffff00000001000000000000000000000000fffffffffffffffffffffffc";
+const B_STRING: &str = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
 
 /// Adds two values and reduces the result modulo a specified modulus.
 ///
@@ -380,9 +345,9 @@ fn scalar_mult(k: &BigInt, p: &(BigInt, BigInt), modulo: &BigInt, a: &BigInt) ->
 /// let private_key = generate_private_key(&n);
 /// println!("Private Key: {}", private_key);
 /// ```
-fn generate_private_key(n: &BigInt) -> BigInt {
+fn generate_private_key(order: &BigInt) -> BigInt {
     let mut rng = rand::thread_rng();
-    let priv_key = rng.gen_bigint_range(&BigInt::ZERO, n);
+    let priv_key = rng.gen_bigint_range(&BigInt::from(1u8), order);
     priv_key
 }
 
@@ -524,24 +489,33 @@ fn calculate_signature_proof(
 fn sign_message(
     priv_key: &BigInt,
     message: &[u8],
-    n: &BigInt,
     generator_point: &(BigInt, BigInt),
+    order: &BigInt,
     modulo: &BigInt,
     a: &BigInt,
+    k: Option<&BigInt>, // for testing purposes
 ) -> (BigInt, BigInt) {
     // Hash the message
-    // let mut sha256 = Sha256::new();
-    // sha256.update(message);
-    // let hash_string: String = format!("{:X}", sha256.finalize());
-    // let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
-    let h: BigInt = BigInt::from(1u8);
+    let mut sha256 = Sha256::new();
+    sha256.update(message);
+    let hash_string: String = format!("{:X}", sha256.finalize());
+    let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
 
-    let k = generate_random_key(n);
-    println!("Random key: {:?}", k);
-    let (r, y) = scalar_mult(&k, generator_point, modulo, a);
-    println!("Expected random point: ({:?}, {:?})", r, y);
-    let s = calculate_signature_proof(&k, &h, &r, priv_key, modulo);
-    (r, s)
+    loop {
+        // Use the provided random key or generate a new one
+        let k = match k {
+            Some(key) => key.clone(),
+            None => generate_random_key(order),
+        };
+
+        let (r, y) = scalar_mult(&k, generator_point, modulo, a);
+        println!("Expected Point: ({:?}, {:?})", r, y);
+        let s = calculate_signature_proof(&k, &h, &r, priv_key, order);
+
+        if s != BigInt::ZERO {
+            return (r, s);
+        }
+    }
 }
 
 /// Verifies a digital signature for a given message using ECDSA.
@@ -591,31 +565,28 @@ fn verify(
     s: &BigInt,
     public_key: &(BigInt, BigInt),
     generator_point: &(BigInt, BigInt),
+    order: &BigInt,
     modulo: &BigInt,
     a: &BigInt,
 ) -> bool {
     // Hash the message
-    // let mut sha256 = Sha256::new();
-    // sha256.update(message);
-    // let hash_string: String = format!("{:X}", sha256.finalize());
-    // let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
-    let h: BigInt = BigInt::from(1u8);
+    let mut sha256 = Sha256::new();
+    sha256.update(message);
+    let hash_string: String = format!("{:X}", sha256.finalize());
+    let h: BigInt = BigInt::from_str_radix(&hash_string, 16).unwrap();
 
     // Calculate s1 from s
-    let s1 = inv_mod(s, modulo).expect("Multiplicative inverse does not exist!");
-    println!("actual s1: {:?}", s1);
+    let s1 = inv_mod(s, order).expect("Multiplicative inverse does not exist!");
 
-    let c1 = mul_mod(&h, &s1, modulo); // (h * s1)
+    let c1 = h.clone() * s1.clone();
     let point_1 = scalar_mult(&c1, generator_point, modulo, a); // (h * s1) * G
 
-    let c2 = mul_mod(r, &s1, modulo); // (r * s1)
+    let c2 = r.clone() * s1.clone();
     let point_2 = scalar_mult(&c2, public_key, modulo, a); // (r * s1) * pubKey
 
-    println!("c1: {:?}, c2: {:?}", c1, c2);
-    println!("Point 1: {:?}, Point 2: {:?}", point_1, point_2);
     let (r_prime_x, r_prime_y) = point_add(point_1, point_2, modulo.clone(), a.clone());
 
-    println!("r_prime_x: {:?}, r_prime_y: {:?}", r_prime_x, r_prime_y);
+    println!("Verified Point: ({:?}, {:?})", r_prime_x, r_prime_y);
     assert_eq!(r_prime_x, r.clone());
     r_prime_x == *r
 }
@@ -627,27 +598,96 @@ fn main() {
     let gy: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
     let a: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
     let _b: BigInt = BigInt::from_str_radix(&B_STRING, 16).unwrap();
-    println!(
-        "n: {:?}, p: {:?}, gx: {:?}, gy: {:?}, a: {:?}",
-        n, p, gx, gy, a
-    );
 
     // Key generation
     let priv_key = generate_private_key(&n);
-    println!("Private key: {:x?}", priv_key);
-
     let g = (gx.clone(), gy.clone());
     let public_key = generate_public_key(&priv_key, &g, &p, &a);
     println!("Public key: {:x?}", public_key);
 
     // Signing of message
-    let message = b"Hello, world!";
-    let (r, s) = sign_message(&priv_key, message, &n, &g, &p, &a);
-    println!("r: {:?}", r);
-    println!("s: {:?}", s);
+    let message = hex!("21188c3edd5de088dacc1076b9e1bcecd79de1003c2414c3866173054dc82dde85169baa77993adb20c269f60a5226111828578bcc7c29e6e8d2dae81806152c8ba0c6ada1986a1983ebeec1473a73a04795b6319d48662d40881c1723a706f516fe75300f92408aa1dc6ae4288d2046f23c1aa2e54b7fb6448a0da922bd7f34");
+    let (r, s) = sign_message(&priv_key, &message, &g, &n, &p, &a, None);
+    println!("Signature (r, s): ({:?}, {:?})", r, s);
 
     // Signature verification
-    let is_valid = verify(message, &r, &s, &public_key, &g, &p, &a);
+    let is_valid = verify(&message, &r, &s, &public_key, &g, &n, &p, &a);
     // Check if verify returns true
-    assert!(is_valid)
+    assert!(is_valid);
+    println!("Signature is valid!");
+}
+
+mod test_vectors;
+
+#[cfg(test)]
+mod ecdsa_tests {
+    use super::*;
+    use crate::test_vectors::{get_test_vectors_k256, get_test_vectors_p256};
+    use num::{BigInt, Num};
+
+    // Define the elliptic curve parameters for p256
+    const N_STRING: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+    const P_STRING: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+    const GX_STRING: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
+    const GY_STRING: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    const A_STRING: &str = "ffffffff00000001000000000000000000000000fffffffffffffffffffffffc";
+
+    #[test]
+    fn public_key_test() {
+        let p: BigInt = BigInt::from_str_radix(&P_STRING, 16).unwrap();
+        let gx: BigInt = BigInt::from_str_radix(&GX_STRING, 16).unwrap();
+        let gy: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
+        let a: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
+
+        let g = (gx.clone(), gy.clone());
+        for test_vector in get_test_vectors_p256() {
+            let priv_key = BigInt::from_str_radix(&test_vector.priv_key, 16).unwrap();
+            let (x, y) = generate_public_key(&priv_key, &g, &p, &a);
+            let correct_x = BigInt::from_str_radix(&test_vector.qx, 16).unwrap();
+            let correct_y = BigInt::from_str_radix(&test_vector.qy, 16).unwrap();
+
+            assert_eq!(correct_x, x);
+            assert_eq!(correct_y, y);
+        }
+    }
+
+    #[test]
+    fn signing_test() {
+        let n: BigInt = BigInt::from_str_radix(&N_STRING, 16).unwrap();
+        let p: BigInt = BigInt::from_str_radix(&P_STRING, 16).unwrap();
+        let gx: BigInt = BigInt::from_str_radix(&GX_STRING, 16).unwrap();
+        let gy: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
+        let a: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
+
+        let g = (gx.clone(), gy.clone());
+        for test_vector in get_test_vectors_p256() {
+            let priv_key = BigInt::from_str_radix(&test_vector.priv_key, 16).unwrap();
+            let k = BigInt::from_str_radix(&test_vector.k, 16).unwrap();
+            let correct_r = BigInt::from_str_radix(&test_vector.r, 16).unwrap();
+            let correct_s = BigInt::from_str_radix(&test_vector.s, 16).unwrap();
+            let (r, s) = sign_message(&priv_key, &test_vector.message, &g, &n, &p, &a, Some(&k));
+
+            assert_eq!(correct_r, r);
+            assert_eq!(correct_s, s);
+        }
+    }
+
+    #[test]
+    fn verify_test() {
+        let n: BigInt = BigInt::from_str_radix(&N_STRING, 16).unwrap();
+        let p: BigInt = BigInt::from_str_radix(&P_STRING, 16).unwrap();
+        let gx: BigInt = BigInt::from_str_radix(&GX_STRING, 16).unwrap();
+        let gy: BigInt = BigInt::from_str_radix(&GY_STRING, 16).unwrap();
+        let a: BigInt = BigInt::from_str_radix(&A_STRING, 16).unwrap();
+
+        let g = (gx.clone(), gy.clone());
+        for test_vector in get_test_vectors_p256() {
+            let priv_key = BigInt::from_str_radix(&test_vector.priv_key, 16).unwrap();
+            let public_key = generate_public_key(&priv_key, &g, &p, &a);
+            let k = BigInt::from_str_radix(&test_vector.k, 16).unwrap();
+            let (r, s) = sign_message(&priv_key, &test_vector.message, &g, &n, &p, &a, Some(&k));
+            let is_valid = verify(&test_vector.message, &r, &s, &public_key, &g, &n, &p, &a);
+            assert!(is_valid)
+        }
+    }
 }
