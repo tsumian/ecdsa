@@ -5,6 +5,7 @@ use num::{BigInt, Num};
 use num_bigint::RandBigInt;
 use sha2::{Digest, Sha256};
 use std::ops::Shr;
+mod test_vectors;
 
 // Inspired by toru3/modulo-n-tools
 // https://gitlab.com/Toru3/modulo-n-tools/-/tree/master?ref_type=heads
@@ -616,8 +617,6 @@ fn main() {
     assert!(is_valid);
     println!("Signature is valid!");
 }
-
-mod test_vectors;
 
 #[cfg(test)]
 mod ecdsa_tests {
