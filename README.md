@@ -84,6 +84,8 @@ For more information on ECDSA and elliptic curve cryptography, refer to the foll
 - [ECDSA](https://cryptobook.nakov.com/digital-signatures/ecdsa-sign-verify-messages)
 - [ECC](https://cryptobook.nakov.com/asymmetric-key-ciphers/elliptic-curve-cryptography-ecc#elliptic-curves)
 - [NIST P256](https://neuromancer.sk/std/nist/P-256)
+- [General Elliptic Curve calculator](https://andrea.corbellini.name/ecc/interactive/modk-add.html)
+- [Modular Inverse Calculator](https://planetcalc.com/3311/)
 
 ## Contributing
 
